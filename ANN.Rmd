@@ -1,0 +1,539 @@
+---
+title: 'Assignment No #4'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+
+movies <- read.csv("D:\\Machine Learning\\Assignment 2\\horror_movies.csv")
+movies <- movies[, c("title", "overview", "tagline", "genre_names")]
+str(movies)
+
+```
+
+```{r}
+
+movies$text <- paste(movies$title, movies$overview, movies$tagline, sep = " ")
+
+head(movies)
+summary(movies)
+
+```
+
+```{r}
+
+
+library(qdap)
+movies$text=rm_stopwords(movies$text, stopwords=tm::stopwords("english"),
+separate=FALSE, strip=TRUE)
+
+```
+
+```{r}
+
+random <- movies[sample(nrow(movies)), ]
+
+```
+
+```{r}
+
+movies$thriller <- grepl("Thriller", movies$genre_names)
+movies$thriller <- as.numeric(movies$thriller)
+
+str(movies$thriller)
+str(movies)
+
+```
+
+```{r}
+
+train_data <- movies[1:21151, -6]
+valid_data <- movies[21152:26032, -6]
+test_data <- movies[26033:32540, -6]
+
+train_data_labels <- movies[1:21151, 6]
+valid_data_labels <-movies[21152:26032, 6]
+test_data_labels <- movies[26033:32540, 6]
+
+```
+
+```{r}
+
+library(keras)
+text_vectorizer <- layer_text_vectorization(output_mode="tf_idf", ngrams =2,
+max_tokens = 5000)
+text_vectorizer %>% adapt(train_data$text)
+train_dtm = text_vectorizer(train_data$text)
+val_dtm =text_vectorizer(valid_data$text)
+test_dtm= text_vectorizer(test_data$text)
+
+```
+
+```{r}
+
+mean_train <- apply(train_dtm, 2, mean)
+std_train <- apply(train_dtm, 2, sd)
+
+scaled_train_dtm <- scale(train_dtm, center = mean_train, scale = std_train)
+scaled_val_dtm <- scale(val_dtm, center = mean_train, scale = std_train)
+scaled_test_dtm <- scale(test_dtm, center = mean_train, scale = std_train)
+
+```
+
+#Q1
+```{r}
+
+model <- keras_model_sequential() %>%
+  layer_dense(units = 32, activation = "relu", input_shape = dim(scaled_train_dtm)[2]) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy"
+)
+
+
+summary(model)
+
+
+```
+
+```{r}
+
+train_dtm_matrix <- as.matrix(scaled_train_dtm)
+val_dtm_matrix <- as.matrix(scaled_val_dtm)
+test_dtm_matrix <- as.matrix(scaled_test_dtm)
+
+train_labels <- as.numeric(train_data_labels)
+valid_labels <- as.numeric(valid_data_labels)
+
+str(train_data_labels)
+
+```
+
+```{r}
+
+
+
+history <- model %>% fit(
+  x = train_dtm_matrix, y = train_labels,
+  epochs = 20,
+  batch_size = 32,
+  validation_data = list(x = val_dtm_matrix, y = valid_labels), verbose = 2)
+
+
+
+predicted_probs <- model %>% predict(scaled_test_dtm)
+predicted_labels <- ifelse(predicted_probs > 0.5, 1, 0)
+
+
+confusion_matrix <- table(Predicted = factor(predicted_labels, levels = c(0, 1), labels = c("no-thriller", "Thriller")), 
+Actual = factor(test_data_labels, levels = c(0, 1), labels = c("no-thriller", "Thriller")))
+confusion_matrix
+
+```
+#Q2
+```{r}
+
+library(tfruns)
+
+set.seed(123)
+results <- tuning_run('scrip.R', 
+                           flags = list(
+                             nodes = c(64, 128, 256),
+                             learning_rate = c(0.1, 0.01, 0.001, 0.0001),
+                             batch_size=c(100,150,200),
+                             epochs=c(30,50, 100),
+                             activation=c("relu","sigmoid","tanh")
+                           ),
+                           sample = 0.02
+                           
+)
+
+
+```
+
+```{r}
+
+print(results)
+
+```
+
+```{r}
+results= results[order(results$metric_val_loss),]
+results
+view_run(results$run_dir[1])
+```
+
+```{r}
+cat(
+"After 30 epocv alidation_loss stop decreasing"
+)
+
+```
+#Q3
+```{r}
+train_labels <- as.matrix(train_data_labels)
+valid_labels <- as.matrix(valid_data_labels)
+
+```
+
+```{r}
+
+
+
+combined_dtm <- rbind(train_dtm_matrix, val_dtm_matrix)
+combined_labels <- rbind(train_labels, valid_labels)
+
+
+model <- keras_model_sequential() %>%
+  layer_dense(units = 128, activation = "relu", input_shape = dim(combined_dtm)[2]) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy"
+)
+
+
+summary(model)
+
+
+```
+
+```{r}
+
+history <- model %>% fit(
+  x = combined_dtm, y = combined_labels,
+  epochs = 50,
+  batch_size = 200
+)
+
+
+```
+
+```{r}
+
+
+result = model %>% evaluate(test_dtm_matrix, test_data_labels)
+result
+
+```
+```{r}
+
+predictions=model %>% predict(test_dtm_matrix)
+predictions[1:5]
+
+```
+
+```{r}
+predicted_probs <- model %>% predict(test_dtm_matrix)
+predicted_labels <- ifelse(predicted_probs > 0.5, 1, 0)
+
+
+confusion_matrix <- table(Predicted = factor(predicted_labels, levels = c(0, 1), labels = c("no-thriller", "Thriller")), 
+Actual = factor(test_data_labels, levels = c(0, 1), labels = c("no-thriller", "Thriller")))
+confusion_matrix
+
+
+```
+
+```{r}
+true_thriller <- test_data_labels == 1
+predicted_thriller <- predicted_labels == 1
+
+
+precision <- sum(predicted_thriller & true_thriller) / sum(predicted_labels == 1)
+recall <- sum(predicted_thriller & true_thriller) / sum(true_thriller)
+
+
+cat("Precision for Thriller movies:", precision, "\n")
+cat("Recall for Thriller movies:", recall, "\n")
+
+```
+```{r}
+
+cat("
+Naïve Bayes model in assignment 2 performed better.
+With Overall Accuracy of 85.2%
+Precision for Thriller Class 25%
+Recall for Thriller Class 26.45%
+
+While ANN has Accuracy of 75%
+Precision for Thriller Class 21%
+Recall for Thriller Class 25%
+    ")
+
+```
+#Problem 2
+#Part 1
+```{r}
+
+bike_data <- read.csv("D:\\Machine Learning\\Assignment 4\\train.csv")
+str(bike_data)
+
+```
+
+```{r}
+
+summary(bike_data)
+
+```
+
+```{r}
+
+colSums(is.na(bike_data))
+
+```
+
+```{r}
+
+hist(bike_data$count)
+
+```
+
+```{r}
+cat("
+There are 10886 observations in the dataset.
+The variable datetime is categorical and nominal. The variable season is numerical numerical and indicator. The variable holiday is binary indicator. The variable temp is numerical and continuous. The variable atemp is numerical and categorical. The variable humidity is numerical and continuous. The variable windspeed is numerical and continuous. The variable casual is numerical and continuous. The variable registered is numerical and continuous. The variable count is numerical and discrete.
+There are no missing values.
+The histogram of the count is highly right skewed than means there are observations that are extreme towards right and these are potential outliers. The highest number of counts are around zero
+")
+
+
+```
+
+#Part 2
+```{r}
+
+bike_data <- bike_data[, !(names(bike_data) %in% c("registered", "casual"))]
+dim(bike_data)
+
+```
+#Part 3
+```{r}
+
+bike_data$count <- sqrt(bike_data$count)
+hist(bike_data$count)
+
+```
+#Part 4
+```{r}
+library(lubridate)
+library(dplyr)
+bike_data <- bike_data %>%
+  mutate(datetime = ymd_hms(datetime), dayofmonth = day(datetime), year = year(datetime),
+         dayofweek = wday(datetime), month = month(datetime),
+         hour = hour(datetime))%>% 
+  select(-datetime)
+
+```
+#Part 5
+```{r}
+
+bike_data <- bike_data %>%
+  mutate(x_dayofmonth = cos((2*pi * dayofmonth)/(max(dayofmonth))), y_dayofmonth = sin((2*pi * dayofmonth)/(max(dayofmonth))),
+         x_year = cos((2*pi * year)/(max(year))), y_year = sin((2*pi * year)/(max(year))),
+         x_dayofweek = cos((2*pi * dayofweek)/(max(dayofweek))), y_dayofweek = sin((2*pi * dayofweek)/(max(dayofweek))),
+         x_month = cos((2*pi * month)/(max(month))), y_month = sin((2*pi * month)/(max(month))),
+         x_hour = cos((2*pi * hour)/(max(hour))), y_hour = sin((2*pi * hour)/(max(hour)))) %>%
+  select(-dayofmonth, -dayofweek, -month, -year, -hour) 
+
+```
+
+#Part 6
+```{r}
+library(mltools)
+library(data.table)
+
+bike_data <- data.frame(one_hot(data.table(bike_data)))
+str(bike_data)
+
+```
+#Part 8
+```{r}
+
+library(caret)
+
+set.seed(1)
+inTrain = createDataPartition(bike_data$count, p=0.9, list=FALSE)
+bikes_train = bike_data[inTrain,]
+bikes_test = bike_data[-inTrain,]
+
+```
+#Part 9
+```{r}
+
+set.seed(1)
+inTrain = createDataPartition(bikes_train$count, p=0.9, list=FALSE)
+bikes_train1 = bikes_train[inTrain,]
+bikes_eval = bikes_train[-inTrain,]
+
+```
+
+#Part 10
+```{r}
+
+train_labels = bikes_train1$count
+eval_labels = bikes_eval$count
+test_labels = bikes_test$count
+
+train_mat <- bikes_train1 %>%
+  select(-count) %>%
+  scale() 
+
+
+col_means_train <- attr(train_mat, "scaled:center")
+col_stddevs_train <- attr(train_mat, "scaled:scale")
+
+train_mat = as.matrix(train_mat)
+
+eval_mat <- bikes_eval %>%
+  select(-count) %>%
+  scale( center = col_means_train, scale = col_stddevs_train) %>%
+  as.matrix()
+
+test_mat <- bikes_test %>%
+  select(-count) %>%
+  scale( center = col_means_train, scale = col_stddevs_train) %>%
+  as.matrix()
+
+
+```
+
+#Part 11
+```{r}
+library(tfruns)
+
+set.seed(123)
+results <- tuning_run('script1.R', 
+                      flags = list( 
+                        nodes = c(64, 128, 256),
+                        learning_rate = c(0.1, 0.01, 0.001, 0.0001),
+                        batch_size=c(100,150,200),
+                        epochs=c(30,50, 100),
+                        activation= "relu"
+                      ),
+                      sample = 0.02
+                      
+)
+
+```
+
+```{r}
+results= results[order(results$metric_val_loss),]
+results
+view_run(results$run_dir[1])
+
+
+```
+
+```{r}
+cat("
+Model doesn't overfit. After 4th epoch validation_loss stop decreasing drastically
+    ")
+
+
+```
+
+```{r}
+
+set.seed(123)
+best_model =keras_model_sequential()
+
+best_model %>%
+  layer_dense(units = 64, activation = "relu", input_shape = dim(train_mat)[2]) %>%
+  layer_dense(units = 1, activation = "relu")
+
+
+best_model %>% compile(
+  loss = "mse",
+  optimizer = optimizer_adam(learning_rate = 0.001),
+  metrics = "mse"
+)
+
+best_model %>% fit(
+  train_mat, train_labels,
+  epochs = 100,
+  batch_size = 100
+)
+
+result = best_model %>% evaluate(test_mat, test_labels)
+result
+
+```
+
+```{r}
+
+predictions=best_model %>% predict(test_mat)
+predictions[1:5]
+
+```
+
+```{r}
+
+RMSE = Metrics::rmse(test_labels, predictions)
+RMSE
+
+```
+
+```{r}
+
+cat("The rmse is on square root scale.")
+
+```
+
+#Part 13
+```{r}
+train_control <- trainControl(method = "cv", number = 10)
+
+# Train the model using linear regression
+set.seed(123)
+model_lm <- train(count ~ ., data = bikes_train,
+                  method = "lm", trControl = train_control)
+
+
+```
+
+```{r}
+
+predictions <- predict(model_lm, newdata = bikes_test)
+
+```
+
+```{r}
+
+RMSE_lm <- Metrics::rmse(bikes_test$count, predictions)
+RMSE_lm
+
+```
+
+```{r}
+
+cat("The ANN model performed significantly better than linear regression model.")
+
+```
+
+```{r}
+
+
+
+```
+
+```{r}
+
+
+
+```
+
+```{r}
+
+
+
+```
